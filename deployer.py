@@ -26,7 +26,7 @@ except ImportError:
 
 # Default Fallback Config (8-Core 8-Thread XMRig Pure Cloud Setup)
 DEFAULT_CONFIG = {
-    "template_name": "core-yok7h-t4",
+    "template_name": "core-yok7h-t41",
     "slots_per_key": 20,
     "cpu_count": 8,
     "mining_threads": 8,
@@ -105,7 +105,7 @@ def build_config_json_content(cfg):
         ]
     }, indent=2)
 
-def ensure_template_exists(api_key, template_name="core-yok7h-t4", cpu_count=8, memory_mb=8192, label="E2B"):
+def ensure_template_exists(api_key, template_name="core-yok7h-t41", cpu_count=8, memory_mb=8192, label="E2B"):
     """Cek ketersediaan template di akun E2B; jika belum ada, otomatis build template 8 vCPU & 8GB RAM dengan pre-installed binary"""
     if not template_name or template_name.lower() == "base":
         return "base"
@@ -227,7 +227,7 @@ def spawn_single_sandbox(cfg, account, slot_index):
     if token in quota_keys:
         return {"status": "quota_limit", "worker_name": worker_name, "error": "Quota limit reached"}
 
-    template_name = account.get("ready_template") or cfg.get("template_name", "core-yok7h-t4")
+    template_name = account.get("ready_template") or cfg.get("template_name", "core-yok7h-t41")
     print(f"   🚀 [{label}] Memulai Sandbox Slot #{slot_index} ({worker_name}) [Tpl: {template_name}]...")
     sbx = None
 
@@ -344,7 +344,7 @@ def spawn_single_sandbox(cfg, account, slot_index):
 def deploy_all(cfg, accounts):
     slots = cfg.get("slots_per_key", 20)
     concurrency = cfg.get("concurrency_limit", 20)
-    template_target = cfg.get("template_name", "core-yok7h-t4")
+    template_target = cfg.get("template_name", "core-yok7h-t41")
 
     # Bersihkan orphan sandbox & pastikan template 8-Core siap sebelum mulai (Paralel)
     def prepare_account(acc):
@@ -470,7 +470,7 @@ def main():
         signal.signal(signal.SIGTERM, signal_handler)
 
     parser = argparse.ArgumentParser(description="E2B Multi-Key 8-Core Cloud Sandbox Auto-Deployer")
-    parser.add_argument("--template", "-tmpl", default=None, help="Nama template E2B (default: core-yok7h-t4 atau base)")
+    parser.add_argument("--template", "-tmpl", default=None, help="Nama template E2B (default: core-yok7h-t41 atau base)")
     parser.add_argument("--file", "-f", default=None, help="File path berisi E2B API Key (default: list.txt)")
     parser.add_argument("--slots", "-s", type=int, default=None, help="Jumlah sandbox per API Key (default: 20)")
     parser.add_argument("--timeout", "-t", type=int, default=None, help="Sandbox timeout dalam detik (default: 3000 / 50m)")
@@ -497,7 +497,7 @@ def main():
         cfg["keys_file"] = args.file
 
     keys_file = cfg.get("keys_file", "list.txt")
-    template_name = cfg.get("template_name", "core-yok7h-t4")
+    template_name = cfg.get("template_name", "core-yok7h-t41")
 
     print(f"""
 =============================================================
