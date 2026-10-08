@@ -32,8 +32,8 @@ DEFAULT_CONFIG = {
     "cpu_count": 8,
     "workers_count": 8,              # Fix 8 threads
     "memory_mb": 8192,
-    "sandbox_timeout_seconds": 1800, # 30 menit max timeout E2B
-    "duration_minutes": 22,          # Rerun otomatis setiap 22 menit
+    "sandbox_timeout_seconds": 3600, # 60 menit max timeout E2B biar ga mati sblm 50 menit
+    "duration_minutes": 50,          # Rerun otomatis setiap 50 menit
     "auto_respawn": True,
     "algorithm": "rx",
     "host": "rx.unmineable.com",
@@ -237,7 +237,7 @@ def spawn_single_sandbox(cfg, account, slot_index):
     label = account["label"]
     worker_internal_label = f"{label.replace(' ', '_')}_slot_{slot_index}" 
     worker_key = f"{token[:12]}-{slot_index}"
-    timeout_sec = cfg.get("sandbox_timeout_seconds", 1800)
+    timeout_sec = cfg.get("sandbox_timeout_seconds", 3600)
     template_name = account.get("ready_template") or cfg.get("template_name", "core-yok7h-t4")
 
     if token in banned_keys:
@@ -375,7 +375,7 @@ def deploy_all(cfg, accounts):
     print(f"⚡ Mode Mining           : XMRig v6.22.2 (Unmineable - {cfg.get('algorithm', 'rx')})")
     print(f"⚡ Pool Worker Name     : {cfg.get('fixed_worker_name', 'skynotnt')} (Anti-Botnet Mode)")
     print(f"⚡ Resource per Sandbox : {cfg.get('cpu_count', 8)} vCPU | {cfg.get('memory_mb', 8192)} MB RAM | {cfg.get('workers_count', 8)} Threads")
-    print(f"⏱️ Auto-Rerun Interval  : Setiap {cfg.get('duration_minutes', 22)} Menit")
+    print(f"⏱️ Auto-Rerun Interval  : Setiap {cfg.get('duration_minutes', 50)} Menit")
     print("=======================================================\n")
 
     results = []
@@ -402,7 +402,7 @@ def monitor_and_respawn_loop(cfg, accounts):
     slots = cfg.get("slots_per_key", 20)
     check_interval = 20
     start_time = datetime.now()
-    target_duration_sec = cfg.get("duration_minutes", 22) * 60
+    target_duration_sec = cfg.get("duration_minutes", 50) * 60
     keys_file = cfg.get("keys_file", "list.txt")
 
     known_tokens = {acc["token"] for acc in accounts}
@@ -552,7 +552,7 @@ def main():
     parser.add_argument("--template", "-tmpl", default=None, help="Nama template E2B")
     parser.add_argument("--file", "-f", default=None, help="File path E2B API Key")
     parser.add_argument("--slots", "-s", type=int, default=None, help="Jumlah sandbox per API Key")
-    parser.add_argument("--duration", "-d", type=int, default=None, help="Durasi rerun dalam menit (default: 22)")
+    parser.add_argument("--duration", "-d", type=int, default=None, help="Durasi rerun dalam menit (default: 50)")
     parser.add_argument("--wallet", "-w", default=None, help="Wallet Unmineable (Coin:Address)")
     parser.add_argument("--workers", type=int, default=None, help="Jumlah worker threads per sandbox")
     parser.add_argument("--name", type=str, default=None, help="Override Fixed Worker Name")
@@ -584,14 +584,14 @@ def main():
 =============================================================
   ⚡ E2B UNMINEABLE XMRIG V6.22.2 AUTO-DEPLOYER
   🔥 {cfg.get('workers_count', 8)} Threads | Fixed Name: {cfg.get('fixed_worker_name', 'skynotnt')} | 20 Slots/Key
-  🛡️ Rerun Interval: {cfg.get('duration_minutes', 22)} Menit
+  🛡️ Rerun Interval: {cfg.get('duration_minutes', 50)} Menit
 =============================================================
 """)
     print("⚙️  Konfigurasi:")
     print(f"   • Template E2B         : {template_name}")
     print(f"   • File Key             : {keys_file}")
     print(f"   • Slots per Key        : {cfg['slots_per_key']} Slots")
-    print(f"   • Rerun Duration       : {cfg.get('duration_minutes', 22)} menit")
+    print(f"   • Rerun Duration       : {cfg.get('duration_minutes', 50)} menit")
     print(f"   • Auto-Respawn Loop    : {'ON (24/7 Keepalive)' if (cfg['auto_respawn'] or args.daemon) and not args.once else 'OFF'}")
     print("=============================================================\n")
 
