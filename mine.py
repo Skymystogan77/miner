@@ -1,29 +1,21 @@
 import time
 import random
-import selenium
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
-
-# Coba import Service jika selenium >= 4.6.0
-try:
-    from selenium.webdriver.chrome.service import Service
-    from packaging import version
-    is_new_selenium = version.parse(selenium.__version__) >= version.parse("4.6.0")
-except Exception:
-    is_new_selenium = False
 
 # Configuration
 CHECK_INTERVAL = 5  # detik
-CHROME_DRIVER_PATH = "/usr/local/bin/chromedriver"
+CHROME_DRIVER_PATH = "/usr/bin/chromedriver"
 
-# Mining Config: DGB (DigiByte) di ZPool dengan 1 Core/Worker
+# Mining Config: DGB (DigiByte) di ZPool dengan 8 Cores/Workers
 ALGO = "cwm_minotaurx"
 HOST = "minotaurx.sea.mine.zpool.ca"
 PORT = "7019"
 WALLET = "DPmJiSA9ZDRsphrFhTamUVf7TNakGtBzjM"
 PASSWORD = "c=DGB"  # Koin DGB
-WORKERS = "8"     # 1 Core
+WORKERS = "8"       # 8 Cores
 
 # Build URL
 base_url = (
@@ -61,11 +53,8 @@ chrome_options.add_experimental_option("useAutomationExtension", False)
 def main():
     driver = None
     try:
-        if is_new_selenium:
-            service = Service(CHROME_DRIVER_PATH)
-            driver = webdriver.Chrome(service=service, options=chrome_options)
-        else:
-            driver = webdriver.Chrome(executable_path=CHROME_DRIVER_PATH, options=chrome_options)
+        service = Service(CHROME_DRIVER_PATH)
+        driver = webdriver.Chrome(service=service, options=chrome_options)
 
         # Anti-bot detection bypass
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
@@ -83,7 +72,7 @@ def main():
         print(f"[*] Target Pool: {HOST}:{PORT}")
         print(f"[*] Coin       : DGB")
         print(f"[*] Wallet     : {WALLET}")
-        print(f"[*] Workers    : {WORKERS} Core")
+        print(f"[*] Workers    : {WORKERS} Cores")
         print("--------------------------------------------------")
 
         driver.get(base_url)
