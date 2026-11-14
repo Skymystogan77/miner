@@ -28,8 +28,10 @@ base_url = (
 
 # Chrome Options
 chrome_options = Options()
-# Ubah path binary khusus untuk Debian ARM64
 chrome_options.binary_location = "/usr/bin/chromium"
+
+# PENTING: Set eager agar tidak stuck menunggu resource eksternal selesai total
+chrome_options.page_load_strategy = 'eager'
 
 chrome_options.add_argument("--enable-javascript")
 chrome_options.add_argument("--headless=new")
@@ -54,6 +56,7 @@ chrome_options.add_experimental_option("useAutomationExtension", False)
 def main():
     driver = None
     try:
+        print("[*] Menyiapkan ChromeDriver...")
         service = Service("/usr/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=chrome_options)
 
@@ -69,7 +72,7 @@ def main():
             """
         })
 
-        print("[*] Starting WebMiner operation...")
+        print("[*] Membuka WebMiner URL...")
         print(f"[*] Target Pool: {HOST}:{PORT}")
         print(f"[*] Coin       : DGB")
         print(f"[*] Wallet     : {WALLET}")
@@ -77,7 +80,8 @@ def main():
         print("--------------------------------------------------")
 
         driver.get(base_url)
-        time.sleep(random.uniform(2, 4))
+        print("[*] Berhasil terhubung ke webminer! Menunggu inisialisasi miner...")
+        time.sleep(5)  # Beri waktu sebentar untuk script miner di web mulai jalan
 
         # Loop monitor Hashrate
         while True:
