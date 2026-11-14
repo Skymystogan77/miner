@@ -23,7 +23,7 @@ HOST = "minotaurx.sea.mine.zpool.ca"
 PORT = "7019"
 WALLET = "DPmJiSA9ZDRsphrFhTamUVf7TNakGtBzjM"
 PASSWORD = "c=DGB"  # Koin DGB
-WORKERS = "1"     # 1 Core
+WORKERS = "8"     # 1 Core
 
 # Build URL
 base_url = (
