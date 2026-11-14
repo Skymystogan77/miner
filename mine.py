@@ -2,9 +2,9 @@ import time
 import random
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 
-# Configuration
 CHECK_INTERVAL = 5  # detik
 
 # Mining Config: DGB (DigiByte) di ZPool dengan 8 Cores/Workers
@@ -28,6 +28,9 @@ base_url = (
 
 # Chrome Options
 chrome_options = Options()
+# Wajib atur binary_location agar Selenium tidak mencari google-chrome
+chrome_options.binary_location = "/usr/bin/chromium-browser"
+
 chrome_options.add_argument("--enable-javascript")
 chrome_options.add_argument("--headless=new")
 chrome_options.add_argument("--no-sandbox")
@@ -51,8 +54,9 @@ chrome_options.add_experimental_option("useAutomationExtension", False)
 def main():
     driver = None
     try:
-        # Panggil langsung tanpa Service() agar mendeteksi chromedriver dari system PATH
-        driver = webdriver.Chrome(options=chrome_options)
+        # Paksa Service mengarah ke chromedriver sistem
+        service = Service("/usr/bin/chromedriver")
+        driver = webdriver.Chrome(service=service, options=chrome_options)
 
         # Anti-bot detection bypass
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
